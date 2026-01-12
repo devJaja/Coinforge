@@ -1,155 +1,126 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
-import {ERC20} from "forge-std/interfaces/IERC20.sol"; // Using a mock ERC20 interface from forge-std for compilation
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Errors} from "./libs/Errors.sol";
+import {Events} from "./libs/Events.sol";
 
-contract CreatorCoin is ERC20 {
-    string public name;
-    string public symbol;
-    uint8 public decimals = 18;
-    uint256 private _totalSupply;
-    mapping(address => uint256) private _balances;
-    mapping(address => mapping(address => uint256)) private _allowances;
 
+contract CreatorCoin is ERC20, Ownable, Pausable {
+    using SafeERC20 for IERC20;
     // Bonding curve parameters (placeholder)
-    address public reserveToken; // e.g., WETH, USDC
+    IERC20 public immutable reserveToken; // e.g., WETH, USDC
     uint256 public constant INITIAL_TOKEN_PRICE = 1 ether; // 1 unit of reserveToken for 1 CreatorCoin
     uint256 public constant PRICE_INCREASE_FACTOR = 1000000000000000; // Adjust as needed
-    uint256 public constant ROYALTIES_PERCENTAGE = 5; // 5% royalties (0-100)
+    uint256 public royaltiesPercentage; // 5% royalties (0-100)
     address public immutable treasuryAddress;
-
-    // Events
-    event TokensPurchased(address indexed buyer, uint256 amountInReserveToken, uint256 amountOfCreatorCoin);
-    event TokensSold(address indexed seller, uint256 amountInCreatorCoin, uint256 amountOutReserveToken);
-    event RoyaltiesPaid(address indexed beneficiary, uint256 amount);
 
     constructor(
         string memory _name,
         string memory _symbol,
         address _reserveToken,
-        address _treasuryAddress
-    ) {
-        name = _name;
-        symbol = _symbol;
-        reserveToken = _reserveToken;
+        address _treasuryAddress,
+        uint256 _initialRoyaltyPercentage
+    )
+        ERC20(_name, _symbol)
+        Ownable(msg.sender) // Set the deployer as the initial owner
+    {
+        if (_reserveToken == address(0)) {
+            revert Errors.CreatorCoin__ZeroReserveTokenAddress();
+        }
+        if (_treasuryAddress == address(0)) {
+            revert Errors.CreatorCoin__ZeroTreasuryAddress();
+        }
+        if (_initialRoyaltyPercentage > 100) {
+            revert Errors.CreatorCoin__InvalidRoyaltyPercentage(_initialRoyaltyPercentage);
+        }
+
+        reserveToken = IERC20(_reserveToken);
         treasuryAddress = _treasuryAddress;
-        _totalSupply = 0; // Coins are minted on demand
+        royaltiesPercentage = _initialRoyaltyPercentage;
     }
 
-    function totalSupply() public view override returns (uint256) {
-        return _totalSupply;
+    function _update(address from, address to, uint256 value)
+        internal
+        override(ERC20)
+        whenNotPaused
+    {
+        super._update(from, to, value);
     }
 
-    function balanceOf(address account) public view override returns (uint256) {
-        return _balances[account];
+    function pause() public onlyOwner {
+        _pause();
     }
 
-    function transfer(address recipient, uint256 amount) public override returns (bool) {
-        _transfer(msg.sender, recipient, amount);
-        return true;
+    function unpause() public onlyOwner {
+        _unpause();
     }
 
-    function allowance(address owner, address spender) public view override returns (uint256) {
-        return _allowances[owner][spender];
+    function setRoyaltyRate(uint256 newRate) public onlyOwner {
+        if (newRate > 100) {
+            revert Errors.CreatorCoin__InvalidRoyaltyPercentage(newRate);
+        }
+        emit Events.RoyaltyRateUpdated(royaltiesPercentage, newRate);
+        royaltiesPercentage = newRate;
     }
 
-    function approve(address spender, uint256 amount) public override returns (bool) {
-        _approve(msg.sender, spender, amount);
-        return true;
+    function mint(address to, uint256 amount) public onlyOwner {
+        _mint(to, amount);
     }
 
-    function transferFrom(address sender, address recipient, uint256 amount) public override returns (bool) {
-        _transfer(sender, recipient, amount);
-        uint256 currentAllowance = _allowances[sender][msg.sender];
-        require(currentAllowance >= amount, "ERC20: transfer amount exceeds allowance");
-        _approve(sender, msg.sender, currentAllowance - amount);
-        return true;
+    function burn(address from, uint256 amount) public onlyOwner {
+        _burn(from, amount);
     }
-
-    function _transfer(address sender, address recipient, uint256 amount) internal virtual {
-        require(sender != address(0), "ERC20: transfer from the zero address");
-        require(recipient != address(0), "ERC20: transfer to the zero address");
-        require(_balances[sender] >= amount, "ERC20: transfer amount exceeds balance");
-
-        _balances[sender] -= amount;
-        _balances[recipient] += amount;
-        emit Transfer(sender, recipient, amount);
-    }
-
-    function _approve(address owner, address spender, uint256 amount) internal virtual {
-        require(owner != address(0), "ERC20: approve from the zero address");
-        require(spender != address(0), "ERC20: approve to the zero address");
-
-        _allowances[owner][spender] = amount;
-        emit Approval(owner, spender, amount);
-    }
-
-    // --- Bonding Curve Logic (Simplified Placeholder) ---
-    // In a real scenario, this would interact with a more complex curve or an Automated Market Maker (AMM)
-    // The price increases with demand (more tokens minted) and decreases with supply (tokens burned).
 
     function getCurrentPrice() public view returns (uint256) {
-        // Simplified price calculation: price increases with total supply
-        // This is a very basic example; real bonding curves are more complex.
-        return INITIAL_TOKEN_PRICE + (_totalSupply / PRICE_INCREASE_FACTOR);
+        return INITIAL_TOKEN_PRICE + (totalSupply() / PRICE_INCREASE_FACTOR);
     }
 
-    function buy(uint256 amountInReserveToken) public returns (uint256) {
-        require(amountInReserveToken > 0, "Buy amount must be positive");
+    function buy(uint256 amountInReserveToken) public whenNotPaused returns (uint256) {
+        if (amountInReserveToken == 0) {
+            revert Errors.CreatorCoin__ZeroBuyAmount();
+        }
 
-        // Transfer reserve token from buyer to this contract
-        // In a real scenario, this would be an actual token transfer using IERC20.transferFrom
-        // For this placeholder, we simulate the transfer.
-        // IERC20(reserveToken).transferFrom(msg.sender, address(this), amountInReserveToken);
+        reserveToken.safeTransferFrom(msg.sender, address(this), amountInReserveToken);
 
         uint256 currentPrice = getCurrentPrice();
         uint256 amountOfCreatorCoin = amountInReserveToken / currentPrice;
-        require(amountOfCreatorCoin > 0, "Not enough reserve token to buy any CreatorCoin");
+        if (amountOfCreatorCoin == 0) {
+            revert Errors.CreatorCoin__InsufficientReserveTokenAmount();
+        }
 
         _mint(msg.sender, amountOfCreatorCoin);
 
-        emit TokensPurchased(msg.sender, amountInReserveToken, amountOfCreatorCoin);
+        emit Events.TokensPurchased(msg.sender, amountInReserveToken, amountOfCreatorCoin);
         return amountOfCreatorCoin;
     }
 
-    function sell(uint256 amountOfCreatorCoin) public returns (uint256) {
-        require(amountOfCreatorCoin > 0, "Sell amount must be positive");
-        require(_balances[msg.sender] >= amountOfCreatorCoin, "Insufficient CreatorCoin balance to sell");
+    function sell(uint256 amountOfCreatorCoin) public whenNotPaused returns (uint256) {
+        if (amountOfCreatorCoin == 0) {
+            revert Errors.CreatorCoin__ZeroSellAmount();
+        }
+        if (balanceOf(msg.sender) < amountOfCreatorCoin) {
+            revert Errors.CreatorCoin__InsufficientBalanceToSell(amountOfCreatorCoin, balanceOf(msg.sender));
+        }
 
         uint256 currentPrice = getCurrentPrice();
         uint256 amountOutReserveToken = amountOfCreatorCoin * currentPrice;
 
-        // Calculate and distribute royalties
-        uint256 royalties = (amountOutReserveToken * ROYALTIES_PERCENTAGE) / 100;
+        uint256 royalties = (amountOutReserveToken * royaltiesPercentage) / 100;
         uint256 netAmount = amountOutReserveToken - royalties;
 
-        // Transfer royalties to the treasury
-        // IERC20(reserveToken).transfer(treasuryAddress, royalties);
-        emit RoyaltiesPaid(treasuryAddress, royalties);
+        reserveToken.safeTransfer(treasuryAddress, royalties);
+        emit Events.RoyaltiesPaid(treasuryAddress, royalties);
 
-        // Transfer reserve token from this contract back to seller
-        // IERC20(reserveToken).transfer(msg.sender, netAmount);
+        reserveToken.safeTransfer(msg.sender, netAmount);
 
         _burn(msg.sender, amountOfCreatorCoin);
 
-        emit TokensSold(msg.sender, amountOfCreatorCoin, netAmount);
+        emit Events.TokensSold(msg.sender, amountOfCreatorCoin, netAmount);
         return netAmount;
-    }
-
-    function _mint(address account, uint256 amount) internal virtual {
-        require(account != address(0), "ERC20: mint to the zero address");
-
-        _totalSupply += amount;
-        _balances[account] += amount;
-        emit Transfer(address(0), account, amount);
-    }
-
-    function _burn(address account, uint256 amount) internal virtual {
-        require(account != address(0), "ERC20: burn from the zero address");
-        require(_balances[account] >= amount, "ERC20: burn amount exceeds balance");
-
-        _balances[account] -= amount;
-        _totalSupply -= amount;
-        emit Transfer(account, address(0), amount);
     }
 }
