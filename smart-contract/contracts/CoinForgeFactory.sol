@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
+/*//////////////////////////////////////////////////////////////
+                            IMPORTS
+//////////////////////////////////////////////////////////////*/
+
 import {CreatorCoin} from "./CreatorCoin.sol";
 import {Events} from "./libs/Events.sol";
+
+/*//////////////////////////////////////////////////////////////
+                         CONTRACT METADATA
+//////////////////////////////////////////////////////////////*/
 
 /// @title CoinForgeFactory
 /// @author CoinForge Team
@@ -10,12 +18,18 @@ import {Events} from "./libs/Events.sol";
 /// It acts as a factory for creating and managing CreatorCoin instances.
 
 contract CoinForgeFactory {
+    /*//////////////////////////////////////////////////////////////
+                               STORAGE
+    //////////////////////////////////////////////////////////////*/
 
     /// @dev An array to keep track of all deployed CreatorCoin contract addresses.
     /// This allows for easy retrieval and auditing of all coins created by the factory.
     // Mapping to keep track of all deployed CreatorCoin addresses
     CreatorCoin[] public deployedCreatorCoins;
 
+    /*//////////////////////////////////////////////////////////////
+                           EXTERNAL FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
     /// @notice Creates and deploys a new CreatorCoin contract.
     /// @dev This function instantiates a new CreatorCoin with the provided parameters,
@@ -54,6 +68,10 @@ contract CoinForgeFactory {
 
         return address(newCoin);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                           VIEW FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
     /// @notice Returns an array of all CreatorCoin contracts deployed by this factory.
     /// @dev This function provides a way to retrieve all CreatorCoin instances
