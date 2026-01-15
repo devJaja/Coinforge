@@ -4,6 +4,11 @@ pragma solidity ^0.8.28;
 import {CreatorCoin} from "./CreatorCoin.sol";
 import {Events} from "./libs/Events.sol";
 
+/// @title CoinForgeFactory
+/// @author CoinForge Team
+/// @notice This contract is responsible for deploying new CreatorCoin contracts.
+/// It acts as a factory for creating and managing CreatorCoin instances.
+
 contract CoinForgeFactory {
     // Mapping to keep track of all deployed CreatorCoin addresses
     CreatorCoin[] public deployedCreatorCoins;
@@ -37,7 +42,11 @@ contract CoinForgeFactory {
         return address(newCoin);
     }
 
-    function getDeployedCreatorCoins() public view returns (CreatorCoin[] memory) {
+    function getDeployedCreatorCoins()
+        public
+        view
+        returns (CreatorCoin[] memory)
+    {
         return deployedCreatorCoins;
     }
 }
